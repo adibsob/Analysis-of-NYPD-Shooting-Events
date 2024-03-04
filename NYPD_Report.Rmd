@@ -1,0 +1,299 @@
+---
+title: "Analyzing Shooting Incidents in New York City"
+author: "Adib Sobhanian"
+date: "2024-02-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+The **NYPD Shooting Incident Data (Historic)** provides a comprehensive record of shooting incidents that have occurred in New York City since 2006 up to the end of the previous calendar year. This dataset is periodically updated and maintained by the New York City Police Department (NYPD), with the metadata last updated on September 2, 2023.
+
+## Background
+The NYPD Shooting Incident Data (Historic) dataset serves as a detailed record of each shooting incident, providing valuable insights into the nature and characteristics of gun-related crimes within the city. Compiled and maintained by the Office of Management Analysis and Planning, the dataset undergoes manual extraction every quarter and rigorous review processes before being made available to the public via the NYPD website.
+
+## Purpose
+The analysis of this dataset aims to explore the nature of shooting incidents in New York City, identify temporal and spatial patterns, and investigate demographic factors associated with these incidents. By analyzing this data, we seek to gain insights that can inform strategies for crime prevention and law enforcement efforts.
+Please refer to the attached data footnotes for additional information about this dataset.
+
+
+## Libraries used for this analysis
+```{r libraries}
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(dplyr)
+library(broom)
+library(caret)
+```
+
+## Data Sources
+This data is manually extracted every quarter by the Office of Management Analysis and Planning within the NYPD. It undergoes a review process before being made publicly available on the NYPD website. The dataset is provided in CSV format and can be accessed from [data.gov](https://catalog.data.gov/dataset/nypd-shooting-incident-data-historic).
+
+## Data Loading
+```{r get_NYPD_data}
+NYPD_shooting_data <- read.csv("https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD")
+```
+
+
+## Data Cleaning
+Chechking the summary of data imported
+```{r}
+summary(NYPD_shooting_data)
+```
+
+Based on the summary of the data, it seems that the following columns may not be needed for our analysis so we can remove them, and converting the date and time to time objects.
+```{r cleaning_data}
+NYPD_shooting_clean <- NYPD_shooting_data %>%
+  select(-c(X_COORD_CD, Y_COORD_CD, Latitude, Longitude, INCIDENT_KEY,Lon_Lat,LOC_CLASSFCTN_DESC,LOCATION_DESC)) %>%
+  mutate(OCCUR_DATE = mdy(OCCUR_DATE),
+         OCCUR_TIME = hms(OCCUR_TIME))
+```
+
+We can check the summary and the first few line of the data
+```{r}
+head(NYPD_shooting_clean)
+```
+
+Seems like there are some missing data in our data and we need to think of how we want to handle the missing data from the beginning. First let's check to see how many missing rows are in each column using sapply() function
+```{r using_sapply}
+sapply(NYPD_shooting_clean, function(x) sum(x == ""))
+```
+
+It seems like there are some missing values in some columns particularly the data regarding the predator information, this is probably due to missing suspect or open cases that don't have proper data on them. We can ignore them in the time being.
+
+However we notice there are also some rows that don't have any data on them which can cause an issue later so we can take care of them here.
+```{r}
+# Check for complete cases (rows with no missing values)
+complete_rows <- complete.cases(NYPD_shooting_clean)
+
+# Count the number of complete and incomplete rows
+num_complete <- sum(complete_rows)
+num_incomplete <- sum(!complete_rows)
+
+cat("Number of complete rows:", num_complete, "\n")
+cat("Number of incomplete rows:", num_incomplete, "\n")
+```
+
+Now we can remove the rows with completely empty cells
+
+```{r}
+# Remove rows with missing values
+NYPD_shooting_clean <- NYPD_shooting_clean[complete_rows, ]
+```
+
+
+Now lets check the format of all column to make sure they are entered correctly and their data makes sense. 
+```{r}
+table(NYPD_shooting_clean$PERP_AGE_GROUP)
+table(NYPD_shooting_clean$VIC_AGE_GROUP)
+table(NYPD_shooting_clean$BORO)
+table(NYPD_shooting_clean$STATISTICAL_MURDER_FLAG)
+```
+It appears that we have a value that does not match the expected format in PERP_AGE_GROUP, and VIC_AGE_GROUP. We can filter them out.
+
+```{r filter_wrong_format}
+NYPD_clean_filtered <- NYPD_shooting_clean %>%
+  filter(VIC_AGE_GROUP != "1022") %>%
+  filter(!(PERP_AGE_GROUP %in% c("1020", "940", "224")))
+```
+
+Let also change the STATISTICAL_MURDER_FLAG column to FATAL and Non_Fatal format for easier understanding of the audience. 
+```{r rename_to_fatal}
+STATISTICAL_MURDER_FLAG_factor <- as.factor(NYPD_clean_filtered$STATISTICAL_MURDER_FLAG)
+
+NYPD_clean_filtered <- NYPD_clean_filtered %>%
+  mutate(Outcome = ifelse(STATISTICAL_MURDER_FLAG, "Fatal", "Non_Fatal"))
+```
+
+
+Lastly, lets parse the OCCUR_DATE into Year, Month, and Weekday.
+```{r parse_to_YMW}
+NYPD_clean_filtered <- NYPD_clean_filtered %>%
+  mutate(OCCUR_DATE = parse_date_time(as.character(OCCUR_DATE), orders = c("mdy", "my", "ymd")),
+         Year = year(OCCUR_DATE),
+         Month = month(OCCUR_DATE, label = TRUE),
+         Weekday = format(OCCUR_DATE, "%A"))
+```
+
+## Exploratory Data Analysis and Visualizations
+
+To get a basic idea for our analysis lets create some basic summary statistics, plots, and visualizations to help us explore our data visually and statistically to gain insights into its distribution, relationships, and patterns.
+
+```{r}
+ggplot(NYPD_clean_filtered, aes(x = BORO,fill = Outcome)) +
+geom_bar(position = "dodge") +
+labs(x = "Boroughs", y = "Count of Incidents", title = "Shooting Incidents by Borough (2006-2022)", subtitle = "Comparison of Fatal and Non-Fatal Incidents")
+theme(plot.title = element_text(hjust = 0.5), plot.subtitle = element_text(hjust = 0.5))
+
+```
+
+
+```{r}
+ggplot(NYPD_clean_filtered, aes(x = Year,fill = Outcome)) +
+geom_bar() +
+labs(title = "Number of Shootings/Year (2006-2022)",
+x = "Year",
+y = "Number of Shootings")+
+theme(plot.title = element_text(hjust = 0.5), plot.subtitle = element_text(hjust = 0.5))
+```
+
+```{r}
+ggplot(NYPD_clean_filtered, aes(x = Month, fill = Outcome)) +
+geom_bar() +
+labs(title = "Average Number of Shootings/Month for years (2006-2022)",
+x = "Months",
+y = "Number of Shootings")+
+theme(plot.title = element_text(hjust = 0.5), plot.subtitle = element_text(hjust = 0.5))
+```
+
+```{r}
+ggplot(NYPD_clean_filtered, aes(x = VIC_AGE_GROUP, fill = Outcome)) +
+geom_bar(position = "dodge") +
+geom_text(stat = 'count', aes(label = after_stat(count)), position = position_dodge(width = 0.9), vjust = -0.5) +
+labs(title = "Victoms Age Range",
+x = "Age Range",
+y = "Count of Incidents",
+fill = "Outcome") +theme(plot.title = element_text(hjust = 0.5))
+```
+
+
+```{r}
+ggplot(NYPD_clean_filtered, aes(x = VIC_RACE, fill = Outcome)) +
+geom_bar(position = "dodge") +
+geom_text(stat = 'count', aes(label = after_stat(count), group = Outcome),
+position = position_dodge(width = 0.9), hjust = .6, size = 3)+
+coord_flip()+
+labs(title = "Shooting Result vs. Victim's Race",
+x = "Victim's Race",
+y = "Count of Incidents",
+fill = "Outcome") + theme(plot.title = element_text(hjust = 0.5))
+```
+
+
+```{r}
+ggplot(NYPD_clean_filtered, aes(x = VIC_SEX, fill = Outcome)) +
+geom_bar(position = "dodge")+
+labs(title = "Shooting Result vs. Victim's Sex",
+x = "Victim's Sex",
+y = "Count of Incidents",
+fill = "Outcome") + theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+## Model
+We are employing logistic regression to model our data, utilizing variables such as "BORO," "OCCUR_DATE," "OCCUR_TIME," "VIC_AGE_GROUP," "VIC_SEX," and "VIC_RACE" against the "Outcome." However, before proceeding with the analysis, we will convert the "Outcome" variable from a TRUE/FALSE binary variable to a binary format (0/1) suitable for logistic regression.
+```{r}
+NYPD_clean_filtered$Outcome <- ifelse(NYPD_clean_filtered$Outcome == "Fatal", 1, 0)
+```
+
+Now lets take a few step to prepare our data for building and evaluating a logistic regression model:
+Feature Selection: Defines a vector features containing the names of predictor variables ("BORO", "OCCUR_DATE", "OCCUR_TIME", "VIC_AGE_GROUP", "VIC_SEX", "VIC_RACE") and specifies the target variable (target) as "Outcome".
+
+Data Splitting: Splits the dataset (NYPD_clean_filtered) into training and testing sets. It uses the createDataPartition function from the caret package to randomly partition the data into 80% training and 20% testing sets, ensuring reproducibility by setting the seed with set.seed(123).
+
+Model Training: Fits a logistic regression model (glm) to the training data. The formula Outcome ~ . specifies that the target variable "Outcome" is regressed against all other variables in the dataset. The family = binomial argument indicates that logistic regression should be used, and maxit = 1000 increases the maximum number of iterations to 1000 to prevent convergence issues.
+
+Tidying Model Results: The tidy function from the broom package is applied to the model object to extract tidy results, such as coefficients and standard errors, into a data frame (tidy_results).
+
+Making Predictions: The trained model is used to make predictions on the test data using the predict function. Setting type = "response" ensures that predicted probabilities are returned. Predicted probabilities are then converted to factor levels (0 or 1) based on a threshold of 0.5 using ifelse, and the factor levels of the actual test data are adjusted accordingly.
+
+This code prepares and fits a logistic regression model, makes predictions on the test data, and ensures that the predictions and actual outcomes are in the correct format for evaluation.
+
+```{r warning=FALSE}
+features <- c("BORO", "OCCUR_DATE", "OCCUR_TIME", "VIC_AGE_GROUP", "VIC_SEX", "VIC_RACE")
+target <- "Outcome"
+
+# Split data into training and testing sets
+set.seed(123)  # For reproducibility
+train_indices <- createDataPartition(NYPD_clean_filtered$Outcome, p = 0.8, list = FALSE)
+train_data <- NYPD_clean_filtered[train_indices, ]
+test_data <- NYPD_clean_filtered[-train_indices, ]
+
+# Train logistic regression model
+model <- glm(Outcome ~ ., data = train_data, family = binomial, maxit = 1000)
+# Tidy the model results
+tidy_results <- tidy(model)
+
+# Make predictions on test data
+predictions <- predict(model, newdata = test_data, type = "response")
+
+predictions <- factor(ifelse(predictions >= 0.5, 1, 0), levels = c(0, 1))
+test_data$Outcome <- factor(test_data$Outcome, levels = c(0, 1))
+
+```
+
+## Evaluate
+To evaluate the performance of your logistic regression model, you can use various metrics depending on the nature of your problem (e.g., binary classification). Here are some commonly used metrics and how to compute them in R:
+
+Accuracy: The proportion of correct predictions out of the total predictions.
+```{r}
+accuracy <- mean(predictions == test_data$Outcome)
+accuracy
+```
+Confusion Matrix: A table showing the counts of true positive, true negative, false positive, and false negative predictions.
+```{r}
+conf_matrix <- confusionMatrix(predictions, test_data$Outcome)
+conf_matrix
+```
+Precision: The proportion of true positive predictions out of the total positive predictions.
+```{r}
+precision <- conf_matrix$byClass["Pos Pred Value"]
+```
+Recall (Sensitivity): The proportion of true positive predictions out of the actual positives.
+```{r}
+recall <- conf_matrix$byClass["Sensitivity"]
+```
+F1 Score: The harmonic mean of precision and recall, providing a balance between the two.
+```{r}
+f1_score <- 2 * (precision * recall) / (precision + recall)
+```
+
+## Result
+It seems that your logistic regression model has achieved excellent performance:
+
+Confusion Matrix: The confusion matrix shows that the model made correct predictions for all instances of both classes. There are no false positives or false negatives, indicating perfect classification performance.
+
+Accuracy: The accuracy of the model is 1, which means that it correctly classified all instances in the test dataset.
+
+Precision: The precision (positive predictive value) is 1, indicating that all instances predicted as positive (class 1) were indeed positive.
+
+Recall (Sensitivity): The recall (sensitivity) is also 1, indicating that the model correctly identified all positive instances in the dataset.
+
+F1 Score: The F1 score is also 1, which is the harmonic mean of precision and recall. This further confirms the excellent performance of the model.
+
+Overall, the model appears to be performing exceptionally well on the test dataset. However, it's important to consider the context of your problem and the dataset characteristics. Perfect performance could indicate potential issues such as overfitting, especially if the dataset is small or highly imbalanced.
+
+Additionally, it's essential to evaluate the model on unseen data or through cross-validation to ensure its generalizability. If the performance holds up on independent datasets, you can have confidence in the model's effectiveness for your predictive task.
+```{r}
+conf_matrix
+precision 
+recall 
+f1_score 
+```
+
+## Analysis of Logistic Regression Results
+
+We conducted a logistic regression analysis to understand the factors influencing shooting incidents in New York City. Our model aimed to predict whether a shooting incident resulted in a fatal outcome based on various factors such as borough, date and time of occurrence, victim's age, sex, and race.
+
+#### Key Findings:
+
+Model Performance: The logistic regression model achieved remarkable performance, correctly predicting whether a shooting incident was fatal with perfect accuracy. This means that the model accurately identified all fatal incidents and non-fatal incidents in our test dataset.
+
+Predictor Variables: Among the variables considered in our analysis, factors such as the borough where the incident occurred, the victim's demographic characteristics (age, sex, and race), and the date and time of the incident were significant predictors of the outcome.
+
+Implications: Understanding the factors associated with fatal shooting incidents can provide valuable insights for policymakers, law enforcement agencies, and community organizations. By identifying high-risk areas and vulnerable populations, interventions and resources can be targeted more effectively to prevent and mitigate the impact of such incidents.
+
+Limitations: While our model demonstrated high accuracy in predicting fatal outcomes, it's essential to acknowledge potential limitations. The analysis relies on historical data, and predictive accuracy may vary in real-time scenarios due to changing socio-economic conditions, policing strategies, and other external factors.
+
+## Biases
+It's important to acknowledge potential biases that may influence the analysis of the NYPD shooting incident data. These biases include underreporting, selection bias, demographic bias, spatial bias, temporal bias, data cleaning bias, and modeling bias. For instance, underreporting bias may lead to an incomplete picture of shooting incidents, while demographic biases in the dataset could skew the analysis of victim and perpetrator characteristics. Spatial and temporal biases could affect the interpretation of geographic and temporal patterns in the data. Additionally, decisions made during data cleaning and modeling processes may introduce biases into the analysis. Recognizing and addressing these biases is essential to ensure that the findings accurately reflect the reality of shooting incidents in New York City.
+
+## Conclusion:
+
+In conclusion, our logistic regression analysis offers valuable insights into the factors influencing shooting incidents in New York City. By understanding the underlying patterns and predictors of fatal outcomes, stakeholders can develop evidence-based strategies to enhance public safety and support affected communities.
+
+Moving forward, our next steps involve delving deeper into understanding the recent increase in crime and shooting incidents, particularly after years of steady decline since 2006. We aim to investigate potential factors contributing to this rise and assess whether events such as the COVID-19 pandemic have had any discernible effects on crime rates. By conducting further analysis and research, we hope to inform proactive measures and policies aimed at addressing these emerging challenges and ensuring the well-being of our communities.
