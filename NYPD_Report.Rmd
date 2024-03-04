@@ -297,3 +297,5 @@ It's important to acknowledge potential biases that may influence the analysis o
 In conclusion, our logistic regression analysis offers valuable insights into the factors influencing shooting incidents in New York City. By understanding the underlying patterns and predictors of fatal outcomes, stakeholders can develop evidence-based strategies to enhance public safety and support affected communities.
 
 Moving forward, our next steps involve delving deeper into understanding the recent increase in crime and shooting incidents, particularly after years of steady decline since 2006. We aim to investigate potential factors contributing to this rise and assess whether events such as the COVID-19 pandemic have had any discernible effects on crime rates. By conducting further analysis and research, we hope to inform proactive measures and policies aimed at addressing these emerging challenges and ensuring the well-being of our communities.
+
+```{r session_info}
